@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emicklei/go-restful"
+	restful "github.com/emicklei/go-restful"
 
 	meshconfig "istio.io/api/mesh/v1alpha1"
 	"istio.io/istio/pilot/pkg/config/memory"
@@ -80,7 +80,7 @@ func makeDiscoveryRequest(ds *DiscoveryService, method, url string, t *testing.T
 	}
 	httpWriter := httptest.NewRecorder()
 	container := restful.NewContainer()
-	ds.Register(container, nil)
+	ds.Register(container)
 	container.ServeHTTP(httpWriter, httpRequest)
 	body, err := ioutil.ReadAll(httpWriter.Result().Body)
 	if err != nil {
@@ -96,7 +96,7 @@ func getDiscoveryResponse(ds *DiscoveryService, method, url string, t *testing.T
 	}
 	httpWriter := httptest.NewRecorder()
 	container := restful.NewContainer()
-	ds.Register(container, nil)
+	ds.Register(container)
 	container.ServeHTTP(httpWriter, httpRequest)
 
 	return httpWriter.Result()

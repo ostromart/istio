@@ -141,7 +141,7 @@ func init() {
 // DiscoveryService publishes services, clusters, and routes for all proxies
 type DiscoveryService struct {
 	model.Environment
-	Server          *http.Server
+	server          *http.Server
 	webhookClient   *http.Client
 	webhookEndpoint string
 	// TODO Profile and optimize cache eviction policy to avoid
@@ -320,7 +320,7 @@ type DiscoveryServiceOptions struct {
 
 // NewDiscoveryService creates an Envoy discovery service on a given port
 func NewDiscoveryService(ctl model.Controller, configCache model.ConfigStoreCache,
-	environment model.Environment, o DiscoveryServiceOptions, inContainer *restful.Container, ws *restful.WebService) (*DiscoveryService, error) {
+	environment model.Environment, o DiscoveryServiceOptions) (*DiscoveryService, error) {
 	out := &DiscoveryService{
 		Environment: environment,
 		sdsCache:    newDiscoveryCache("sds", o.EnableCaching),
@@ -329,11 +329,7 @@ func NewDiscoveryService(ctl model.Controller, configCache model.ConfigStoreCach
 		ldsCache:    newDiscoveryCache("lds", o.EnableCaching),
 	}
 
-	// Allow preregistered container to allow adding handlers from external packages.
-	container := inContainer
-	if container == nil {
-		container = restful.NewContainer()
-	}
+	container := restful.NewContainer()
 	if o.EnableProfiling {
 		container.ServeMux.HandleFunc("/debug/pprof/", pprof.Index)
 		container.ServeMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -341,11 +337,11 @@ func NewDiscoveryService(ctl model.Controller, configCache model.ConfigStoreCach
 		container.ServeMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 		container.ServeMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	}
-	out.Register(container, ws)
+	out.Register(container)
 
 	out.webhookEndpoint, out.webhookClient = util.NewWebHookClient(o.WebhookEndpoint)
 
-	out.Server = &http.Server{Addr: ":" + strconv.Itoa(o.Port), Handler: container}
+	out.server = &http.Server{Addr: ":" + strconv.Itoa(o.Port), Handler: container}
 
 	// Flush cached discovery responses whenever services, service
 	// instances, or routing configuration changes.
@@ -371,14 +367,10 @@ func NewDiscoveryService(ctl model.Controller, configCache model.ConfigStoreCach
 }
 
 // Register adds routes a web service container. This is visible for testing purposes only.
-func (ds *DiscoveryService) Register(container *restful.Container, wsIn *restful.WebService) {
-	ws := wsIn
-	if ws == nil {
-		ws = &restful.WebService{}
-		ws.Produces(restful.MIME_JSON)
-	}
+func (ds *DiscoveryService) Register(container *restful.Container) {
+	ws := &restful.WebService{}
+	ws.Produces(restful.MIME_JSON)
 
-	fmt.Println("Calling v1.Register")
 	// List all known services (informational, not invoked by Envoy)
 	ws.Route(ws.
 		GET("/v1/registration").
@@ -448,7 +440,7 @@ func (ds *DiscoveryService) Register(container *restful.Container, wsIn *restful
 // connections. Content serving is started by this method, but is executed asynchronously. Serving can be cancelled
 // at any time by closing the provided stop channel.
 func (ds *DiscoveryService) Start(stop chan struct{}) (net.Addr, error) {
-	addr := ds.Server.Addr
+	addr := ds.server.Addr
 	if addr == "" {
 		addr = ":http"
 	}
@@ -459,14 +451,14 @@ func (ds *DiscoveryService) Start(stop chan struct{}) (net.Addr, error) {
 
 	go func() {
 		go func() {
-			if err := ds.Server.Serve(listener); err != nil {
+			if err := ds.server.Serve(listener); err != nil {
 				log.Warna(err)
 			}
 		}()
 
 		// Wait for the stop notification and shutdown the server.
 		<-stop
-		err := ds.Server.Close()
+		err := ds.server.Close()
 		if err != nil {
 			log.Warna(err)
 		}
@@ -532,7 +524,7 @@ func (ds *DiscoveryService) clearCache() {
 // ListAllEndpoints responds with all Services and is not restricted to a single service-key
 func (ds *DiscoveryService) ListAllEndpoints(_ *restful.Request, response *restful.Response) {
 	methodName := "ListAllEndpoints"
-	IncCalls(methodName)
+	incCalls(methodName)
 
 	services := make([]*keyAndService, 0)
 
@@ -540,7 +532,7 @@ func (ds *DiscoveryService) ListAllEndpoints(_ *restful.Request, response *restf
 	if err != nil {
 		// If client experiences an error, 503 error will tell envoy to keep its current
 		// cache and try again later
-		ErrorResponse(methodName, response, http.StatusServiceUnavailable, "EDS "+err.Error())
+		errorResponse(methodName, response, http.StatusServiceUnavailable, "EDS "+err.Error())
 		return
 	}
 
@@ -552,7 +544,7 @@ func (ds *DiscoveryService) ListAllEndpoints(_ *restful.Request, response *restf
 				if err != nil {
 					// If client experiences an error, 503 error will tell envoy to keep its current
 					// cache and try again later
-					ErrorResponse(methodName, response, http.StatusInternalServerError, "EDS "+err.Error())
+					errorResponse(methodName, response, http.StatusInternalServerError, "EDS "+err.Error())
 					return
 				}
 				for _, instance := range instances {
@@ -580,17 +572,17 @@ func (ds *DiscoveryService) ListAllEndpoints(_ *restful.Request, response *restf
 	sort.Slice(services, func(i, j int) bool { return services[i].Key < services[j].Key })
 
 	if err := response.WriteEntity(services); err != nil {
-		IncErrors(methodName)
+		incErrors(methodName)
 		log.Warna(err)
 	} else {
-		ObserveResources(methodName, uint32(len(services)))
+		observeResources(methodName, uint32(len(services)))
 	}
 }
 
 // ListEndpoints responds to EDS requests
 func (ds *DiscoveryService) ListEndpoints(request *restful.Request, response *restful.Response) {
 	methodName := "ListEndpoints"
-	IncCalls(methodName)
+	incCalls(methodName)
 
 	key := request.Request.URL.String()
 	out, resourceCount, cached := ds.sdsCache.cachedDiscoveryResponse(key)
@@ -602,7 +594,7 @@ func (ds *DiscoveryService) ListEndpoints(request *restful.Request, response *re
 		if err != nil {
 			// If client experiences an error, 503 error will tell envoy to keep its current
 			// cache and try again later
-			ErrorResponse(methodName, response, http.StatusServiceUnavailable, "EDS "+err.Error())
+			errorResponse(methodName, response, http.StatusServiceUnavailable, "EDS "+err.Error())
 			return
 		}
 		for _, ep := range endpoints {
@@ -618,7 +610,7 @@ func (ds *DiscoveryService) ListEndpoints(request *restful.Request, response *re
 			})
 		}
 		if out, err = json.MarshalIndent(hosts{Hosts: hostArray}, " ", " "); err != nil {
-			ErrorResponse(methodName, response, http.StatusInternalServerError, "EDS "+err.Error())
+			errorResponse(methodName, response, http.StatusInternalServerError, "EDS "+err.Error())
 			return
 		}
 		resourceCount = uint32(len(endpoints))
@@ -626,11 +618,11 @@ func (ds *DiscoveryService) ListEndpoints(request *restful.Request, response *re
 			ds.sdsCache.updateCachedDiscoveryResponse(key, resourceCount, out)
 		}
 	}
-	ObserveResources(methodName, resourceCount)
-	WriteResponse(response, out)
+	observeResources(methodName, resourceCount)
+	writeResponse(response, out)
 }
 
-func (ds *DiscoveryService) ParseDiscoveryRequest(request *restful.Request) (model.Proxy, error) {
+func (ds *DiscoveryService) parseDiscoveryRequest(request *restful.Request) (model.Proxy, error) {
 	nodeInfo := request.PathParameter(ServiceNode)
 	svcNode, err := model.ParseServiceNode(nodeInfo)
 	if err != nil {
@@ -642,38 +634,38 @@ func (ds *DiscoveryService) ParseDiscoveryRequest(request *restful.Request) (mod
 // AvailabilityZone responds to requests for an AZ for the given cluster node
 func (ds *DiscoveryService) AvailabilityZone(request *restful.Request, response *restful.Response) {
 	methodName := "AvailabilityZone"
-	IncCalls(methodName)
+	incCalls(methodName)
 
-	svcNode, err := ds.ParseDiscoveryRequest(request)
+	svcNode, err := ds.parseDiscoveryRequest(request)
 	if err != nil {
-		ErrorResponse(methodName, response, http.StatusNotFound, "AvailabilityZone "+err.Error())
+		errorResponse(methodName, response, http.StatusNotFound, "AvailabilityZone "+err.Error())
 		return
 	}
 	proxyInstances, err := ds.GetProxyServiceInstances(svcNode)
 	if err != nil {
-		ErrorResponse(methodName, response, http.StatusNotFound, "AvailabilityZone "+err.Error())
+		errorResponse(methodName, response, http.StatusNotFound, "AvailabilityZone "+err.Error())
 		return
 	}
 	if len(proxyInstances) <= 0 {
-		ErrorResponse(methodName, response, http.StatusNotFound, "AvailabilityZone couldn't find the given cluster node")
+		errorResponse(methodName, response, http.StatusNotFound, "AvailabilityZone couldn't find the given cluster node")
 		return
 	}
 	// All instances are going to have the same IP addr therefore will all be in the same AZ
-	WriteResponse(response, []byte(proxyInstances[0].AvailabilityZone))
+	writeResponse(response, []byte(proxyInstances[0].AvailabilityZone))
 }
 
 // ListClusters responds to CDS requests for all outbound clusters
 func (ds *DiscoveryService) ListClusters(request *restful.Request, response *restful.Response) {
 	methodName := "ListClusters"
-	IncCalls(methodName)
+	incCalls(methodName)
 
 	key := request.Request.URL.String()
 	out, resourceCount, cached := ds.cdsCache.cachedDiscoveryResponse(key)
 	transformedOutput := out
 	if !cached {
-		svcNode, err := ds.ParseDiscoveryRequest(request)
+		svcNode, err := ds.parseDiscoveryRequest(request)
 		if err != nil {
-			ErrorResponse(methodName, response, http.StatusNotFound, "CDS "+err.Error())
+			errorResponse(methodName, response, http.StatusNotFound, "CDS "+err.Error())
 			return
 		}
 
@@ -681,11 +673,11 @@ func (ds *DiscoveryService) ListClusters(request *restful.Request, response *res
 		if err != nil {
 			// If client experiences an error, 503 error will tell envoy to keep its current
 			// cache and try again later
-			ErrorResponse(methodName, response, http.StatusServiceUnavailable, "CDS "+err.Error())
+			errorResponse(methodName, response, http.StatusServiceUnavailable, "CDS "+err.Error())
 			return
 		}
 		if out, err = json.MarshalIndent(ClusterManager{Clusters: clusters}, " ", " "); err != nil {
-			ErrorResponse(methodName, response, http.StatusInternalServerError, "CDS "+err.Error())
+			errorResponse(methodName, response, http.StatusInternalServerError, "CDS "+err.Error())
 			return
 		}
 
@@ -703,22 +695,22 @@ func (ds *DiscoveryService) ListClusters(request *restful.Request, response *res
 		}
 	}
 
-	ObserveResources(methodName, resourceCount)
-	WriteResponse(response, transformedOutput)
+	observeResources(methodName, resourceCount)
+	writeResponse(response, transformedOutput)
 }
 
 // ListListeners responds to LDS requests
 func (ds *DiscoveryService) ListListeners(request *restful.Request, response *restful.Response) {
 	methodName := "ListListeners"
-	IncCalls(methodName)
+	incCalls(methodName)
 
 	key := request.Request.URL.String()
 	out, resourceCount, cached := ds.ldsCache.cachedDiscoveryResponse(key)
 	transformedOutput := out
 	if !cached {
-		svcNode, err := ds.ParseDiscoveryRequest(request)
+		svcNode, err := ds.parseDiscoveryRequest(request)
 		if err != nil {
-			ErrorResponse(methodName, response, http.StatusNotFound, "LDS "+err.Error())
+			errorResponse(methodName, response, http.StatusNotFound, "LDS "+err.Error())
 			return
 		}
 
@@ -726,12 +718,12 @@ func (ds *DiscoveryService) ListListeners(request *restful.Request, response *re
 		if err != nil {
 			// If client experiences an error, 503 error will tell envoy to keep its current
 			// cache and try again later
-			ErrorResponse(methodName, response, http.StatusServiceUnavailable, "LDS "+err.Error())
+			errorResponse(methodName, response, http.StatusServiceUnavailable, "LDS "+err.Error())
 			return
 		}
 		out, err = json.MarshalIndent(ldsResponse{Listeners: listeners}, " ", " ")
 		if err != nil {
-			ErrorResponse(methodName, response, http.StatusInternalServerError, "LDS "+err.Error())
+			errorResponse(methodName, response, http.StatusInternalServerError, "LDS "+err.Error())
 			return
 		}
 
@@ -749,8 +741,8 @@ func (ds *DiscoveryService) ListListeners(request *restful.Request, response *re
 			ds.ldsCache.updateCachedDiscoveryResponse(key, resourceCount, transformedOutput)
 		}
 	}
-	ObserveResources(methodName, resourceCount)
-	WriteResponse(response, transformedOutput)
+	observeResources(methodName, resourceCount)
+	writeResponse(response, transformedOutput)
 }
 
 // ListRoutes responds to RDS requests, used by HTTP routes
@@ -758,15 +750,15 @@ func (ds *DiscoveryService) ListListeners(request *restful.Request, response *re
 // to identify HTTP filters in the config. Service node value holds the local proxy identity.
 func (ds *DiscoveryService) ListRoutes(request *restful.Request, response *restful.Response) {
 	methodName := "ListRoutes"
-	IncCalls(methodName)
+	incCalls(methodName)
 
 	key := request.Request.URL.String()
 	out, resourceCount, cached := ds.rdsCache.cachedDiscoveryResponse(key)
 	transformedOutput := out
 	if !cached {
-		svcNode, err := ds.ParseDiscoveryRequest(request)
+		svcNode, err := ds.parseDiscoveryRequest(request)
 		if err != nil {
-			ErrorResponse(methodName, response, http.StatusNotFound, "RDS "+err.Error())
+			errorResponse(methodName, response, http.StatusNotFound, "RDS "+err.Error())
 			return
 		}
 
@@ -776,11 +768,11 @@ func (ds *DiscoveryService) ListRoutes(request *restful.Request, response *restf
 		if err != nil {
 			// If client experiences an error, 503 error will tell envoy to keep its current
 			// cache and try again later
-			ErrorResponse(methodName, response, http.StatusServiceUnavailable, "RDS "+err.Error())
+			errorResponse(methodName, response, http.StatusServiceUnavailable, "RDS "+err.Error())
 			return
 		}
 		if out, err = json.MarshalIndent(routeConfig, " ", " "); err != nil {
-			ErrorResponse(methodName, response, http.StatusInternalServerError, "RDS "+err.Error())
+			errorResponse(methodName, response, http.StatusInternalServerError, "RDS "+err.Error())
 			return
 		}
 
@@ -797,8 +789,8 @@ func (ds *DiscoveryService) ListRoutes(request *restful.Request, response *restf
 			}
 		}
 	}
-	ObserveResources(methodName, resourceCount)
-	WriteResponse(response, transformedOutput)
+	observeResources(methodName, resourceCount)
+	writeResponse(response, transformedOutput)
 }
 
 func (ds *DiscoveryService) invokeWebhook(path string, payload []byte, methodName string) ([]byte, error) {
@@ -823,14 +815,14 @@ func (ds *DiscoveryService) invokeWebhook(path string, payload []byte, methodNam
 	return out, err
 }
 
-func IncCalls(methodName string) {
+func incCalls(methodName string) {
 	callCounter.With(prometheus.Labels{
 		metricLabelMethod:  methodName,
 		metricBuildVersion: buildVersion,
 	}).Inc()
 }
 
-func IncErrors(methodName string) {
+func incErrors(methodName string) {
 	errorCounter.With(prometheus.Labels{
 		metricLabelMethod:  methodName,
 		metricBuildVersion: buildVersion,
@@ -851,22 +843,22 @@ func incWebhookErrors(methodName string) {
 	}).Inc()
 }
 
-func ObserveResources(methodName string, count uint32) {
+func observeResources(methodName string, count uint32) {
 	resourceCounter.With(prometheus.Labels{
 		metricLabelMethod:  methodName,
 		metricBuildVersion: buildVersion,
 	}).Observe(float64(count))
 }
 
-func ErrorResponse(methodName string, r *restful.Response, status int, msg string) {
-	IncErrors(methodName)
+func errorResponse(methodName string, r *restful.Response, status int, msg string) {
+	incErrors(methodName)
 	log.Warn(msg)
 	if err := r.WriteErrorString(status, msg); err != nil {
 		log.Warna(err)
 	}
 }
 
-func WriteResponse(r *restful.Response, data []byte) {
+func writeResponse(r *restful.Response, data []byte) {
 	r.WriteHeader(http.StatusOK)
 	if _, err := r.Write(data); err != nil {
 		log.Warna(err)
