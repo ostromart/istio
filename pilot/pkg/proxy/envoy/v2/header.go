@@ -12,103 +12,82 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package v1
+package v2
 
 import (
 	"fmt"
 	"regexp"
 	"sort"
 
+	"github.com/envoyproxy/go-control-plane/api"
+	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/proxy/envoy/v1"
+
+	google_protobuf "github.com/gogo/protobuf/types"
 	routing "istio.io/api/routing/v1alpha1"
 	routingv2 "istio.io/api/routing/v1alpha2"
-	"istio.io/istio/pilot/pkg/model"
 )
 
-func buildHTTPRouteMatch(matches *routing.MatchCondition) *HTTPRoute {
-	path := ""
-	prefix := "/"
-	var headers Headers
+func buildHTTPHeaderMatcher(matches *routing.MatchCondition) []*api.HeaderMatcher {
+	var out []*api.HeaderMatcher
 	if matches != nil && matches.Request != nil {
 		for name, match := range matches.Request.Headers {
 			if name == model.HeaderURI {
 				// assumes `uri` condition is non-empty
-				switch m := match.MatchType.(type) {
-				case *routing.StringMatch_Exact:
-					path = m.Exact
-					prefix = ""
-				case *routing.StringMatch_Prefix:
-					path = ""
-					prefix = m.Prefix
+				switch match.MatchType.(type) {
 				case *routing.StringMatch_Regex:
-					headers = append(headers, buildHeader(name, match))
+					out = append(out, buildHeaderMatcher(name, match))
 				}
 			} else {
 				switch name {
 				case model.HeaderAuthority, model.HeaderScheme, model.HeaderMethod:
 					name = ":" + name // convert to Envoy header name
 				}
-				headers = append(headers, buildHeader(name, match))
+				out = append(out, buildHeaderMatcher(name, match))
 			}
 		}
-		sort.Sort(headers)
+		// TODO(mostrowski): sort output
 	}
-	return &HTTPRoute{
-		Path:    path,
-		Prefix:  prefix,
-		Headers: headers,
-	}
+	return out
 }
 
-func buildHTTPRouteMatchV2(match *routingv2.HTTPMatchRequest) *HTTPRoute {
+func buildHTTPHeaderMatcherV2(match *routingv2.HTTPMatchRequest) []*api.HeaderMatcher {
 	if match == nil {
-		return &HTTPRoute{Prefix: "/"}
+		return nil
 	}
 
-	route := &HTTPRoute{}
+	var out []*api.HeaderMatcher
 	for name, stringMatch := range match.Headers {
-		route.Headers = append(route.Headers, buildHeaderV2(name, stringMatch))
+		out = append(out, buildHeaderMatcherV2(name, stringMatch))
 	}
 
 	// guarantee ordering of headers
-	sort.Slice(route.Headers, func(i, j int) bool {
-		if route.Headers[i].Name == route.Headers[j].Name {
-			return route.Headers[i].Value < route.Headers[j].Value
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].Value < out[j].Value
 		}
-		return route.Headers[i].Name < route.Headers[j].Name
+		return out[i].Name < out[j].Name
 	})
 
-	if match.Uri != nil {
-		switch m := match.Uri.MatchType.(type) {
-		case *routingv2.StringMatch_Exact:
-			route.Path = m.Exact
-		case *routingv2.StringMatch_Prefix:
-			route.Prefix = m.Prefix
-		case *routingv2.StringMatch_Regex:
-			route.Regex = m.Regex
-		}
-	} else {
-		route.Prefix = "/" // default
-	}
-
 	if match.Method != nil {
-		route.Headers = append(route.Headers, buildHeaderV2(HeaderMethod, match.Method))
+		out = append(out, buildHeaderMatcherV2(v1.HeaderMethod, match.Method))
 	}
 
 	if match.Authority != nil {
-		route.Headers = append(route.Headers, buildHeaderV2(HeaderAuthority, match.Authority))
+		out = append(out, buildHeaderMatcherV2(v1.HeaderAuthority, match.Authority))
 	}
 
 	if match.Scheme != nil {
-		route.Headers = append(route.Headers, buildHeaderV2(HeaderScheme, match.Scheme))
+		out = append(out, buildHeaderMatcherV2(v1.HeaderScheme, match.Scheme))
 	}
 
 	// TODO: match.DestinationPorts
 
-	return route
+	return out
 }
 
-func buildHeader(name string, match *routing.StringMatch) Header {
-	header := Header{Name: name}
+func buildHeaderMatcher(name string, match *routing.StringMatch) *api.HeaderMatcher {
+	header := &api.HeaderMatcher{Name: name}
 
 	switch m := match.MatchType.(type) {
 	case *routing.StringMatch_Exact:
@@ -117,17 +96,17 @@ func buildHeader(name string, match *routing.StringMatch) Header {
 		// Envoy regex grammar is ECMA-262 (http://en.cppreference.com/w/cpp/regex/ecmascript)
 		// Golang has a slightly different regex grammar
 		header.Value = fmt.Sprintf("^%s.*", regexp.QuoteMeta(m.Prefix))
-		header.Regex = true
+		header.Regex = &google_protobuf.BoolValue{true}
 	case *routing.StringMatch_Regex:
 		header.Value = m.Regex
-		header.Regex = true
+		header.Regex = &google_protobuf.BoolValue{true}
 	}
 
 	return header
 }
 
-func buildHeaderV2(name string, match *routingv2.StringMatch) Header {
-	header := Header{Name: name}
+func buildHeaderMatcherV2(name string, match *routingv2.StringMatch) *api.HeaderMatcher {
+	header := &api.HeaderMatcher{Name: name}
 
 	switch m := match.MatchType.(type) {
 	case *routingv2.StringMatch_Exact:
@@ -136,10 +115,10 @@ func buildHeaderV2(name string, match *routingv2.StringMatch) Header {
 		// Envoy regex grammar is ECMA-262 (http://en.cppreference.com/w/cpp/regex/ecmascript)
 		// Golang has a slightly different regex grammar
 		header.Value = fmt.Sprintf("^%s.*", regexp.QuoteMeta(m.Prefix))
-		header.Regex = true
+		header.Regex = &google_protobuf.BoolValue{true}
 	case *routingv2.StringMatch_Regex:
 		header.Value = m.Regex
-		header.Regex = true
+		header.Regex = &google_protobuf.BoolValue{true}
 	}
 
 	return header
