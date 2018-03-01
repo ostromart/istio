@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pkg/log"
 )
 
@@ -61,6 +62,8 @@ type DiscoveryServer struct {
 	mesh MeshDiscovery
 	// grpcServer supports gRPC for xDS v2 services.
 	grpcServer *grpc.Server
+	// env is the model environment.
+	env model.Environment
 }
 
 func init() {
@@ -78,7 +81,7 @@ func Enabled() bool {
 }
 
 // NewDiscoveryServer creates DiscoveryServer that sources data from Pilot's internal mesh data structures
-func NewDiscoveryServer(mesh MeshDiscovery) *DiscoveryServer {
+func NewDiscoveryServer(mesh MeshDiscovery, env model.Environment) *DiscoveryServer {
 	// TODO for now use hard coded / default gRPC options. The constructor may evolve to use interfaces that guide specific options later.
 	// Example:
 	//		grpcOptions = append(grpcOptions, grpc.MaxConcurrentStreams(uint32(someconfig.MaxConcurrentStreams)))
@@ -98,8 +101,9 @@ func NewDiscoveryServer(mesh MeshDiscovery) *DiscoveryServer {
 	grpc.EnableTracing = true
 
 	grpcServer := grpc.NewServer(grpcOptions...)
-	out := &DiscoveryServer{mesh: mesh, grpcServer: grpcServer}
+	out := &DiscoveryServer{mesh: mesh, grpcServer: grpcServer, env: env}
 	xdsapi.RegisterEndpointDiscoveryServiceServer(out.grpcServer, out)
+	xdsapi.RegisterListenerDiscoveryServiceServer(out.grpcServer, out)
 	return out
 }
 

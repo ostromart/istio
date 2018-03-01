@@ -337,7 +337,7 @@ func NewDiscoveryService(ctl model.Controller, configCache model.ConfigStoreCach
 
 	if envoyv2.Enabled() {
 		// For now we create the gRPC server sourcing data from Pilot's older data model.
-		out.serverV2 = envoyv2.NewDiscoveryServer(out)
+		out.serverV2 = envoyv2.NewDiscoveryServer(out, environment)
 	}
 
 	container := restful.NewContainer()
