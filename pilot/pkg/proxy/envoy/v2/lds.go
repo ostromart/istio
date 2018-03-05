@@ -16,16 +16,74 @@ package v2
 
 import (
 	"errors"
+	"io"
+	"time"
 
 	xdsapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	"golang.org/x/net/context"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pkg/log"
 )
 
-func (s *DiscoveryServer) StreamListeners(xdsapi.ListenerDiscoveryService_StreamListenersServer) error {
-	return errors.New("StreamListeners not implemented")
+func (s *DiscoveryServer) StreamListeners(stream xdsapi.ListenerDiscoveryService_StreamListenersServer) error {
+	ticker := time.NewTicker(responseTickDuration)
+	peerInfo, ok := peer.FromContext(stream.Context())
+	peerAddr := "Unknown peer address"
+	if ok {
+		peerAddr = peerInfo.Addr.String()
+	}
+	defer ticker.Stop()
+	var discReq *xdsapi.DiscoveryRequest
+	var receiveError error
+	initialRequest := true
+	reqChannel := make(chan *xdsapi.DiscoveryRequest, 1)
+	go func() {
+		defer close(reqChannel)
+		for {
+			req, err := stream.Recv()
+			if err != nil {
+				if status.Code(err) == codes.Canceled || err == io.EOF {
+					return
+				}
+				receiveError = err
+				log.Errorf("request loop for LDS for client %q terminated with errors %v", peerAddr, err)
+				return
+			}
+			reqChannel <- req
+		}
+	}()
+	for {
+		// Block until either a request is received or the ticker ticks
+		select {
+		case discReq, ok = <-reqChannel:
+			if !ok {
+				return receiveError
+			}
+			if !initialRequest {
+				log.Debugf("LDS ACK from Envoy for client %q has version %q and Nonce %q for request", discReq.GetVersionInfo(), discReq.GetResponseNonce())
+				continue
+			}
+		case <-ticker.C:
+			if !initialRequest {
+				// Ignore ticker events until the very first request is processed.
+				continue
+			}
+		}
+		if initialRequest {
+			initialRequest = false
+			log.Debugf("LDS request from  %q received.", peerAddr)
+		}
+		response := &xdsapi.DiscoveryResponse{}
+		err := stream.Send(response)
+		if err != nil {
+			return err
+		}
+		log.Debugf("\nLDS response from  %q, Response: \n%s\n\n", peerAddr, response.String())
+	}
 }
 
 func (s *DiscoveryServer) FetchListeners(ctx context.Context, in *xdsapi.DiscoveryRequest) (*xdsapi.DiscoveryResponse, error) {
