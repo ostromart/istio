@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package progress
 
 import (
 	"fmt"
@@ -22,6 +22,8 @@ import (
 	"sync"
 
 	"github.com/cheggaaa/pb/v3"
+
+	"istio.io/istio/operator/pkg/name"
 )
 
 // ProgressLog records the progress of an installation
@@ -47,12 +49,12 @@ func (p *ProgressLog) createStatus(maxWidth int) string {
 	comps := []string{}
 	wait := []string{}
 	for c, l := range p.components {
-		comps = append(comps, c)
+		comps = append(comps, name.UserFacingComponentName(name.ComponentName(c)))
 		wait = append(wait, l.waiting...)
 	}
 	sort.Strings(comps)
 	sort.Strings(wait)
-	msg := fmt.Sprintf(`Processing resources for components %s.`, strings.Join(comps, ", "))
+	msg := fmt.Sprintf(`Processing resources for %s.`, strings.Join(comps, ", "))
 	if len(wait) > 0 {
 		msg += fmt.Sprintf(` Waiting for %s`, strings.Join(wait, ", "))
 	}
@@ -98,9 +100,9 @@ func (p *ProgressLog) reportProgress(component string) func() {
 		// The component has completed
 		if cmp.finished || cmp.err != "" {
 			if cmp.finished {
-				p.bar.SetTemplateString(fmt.Sprintf(`{{ green "✔" }} Component %s installed`, component))
+				p.bar.SetTemplateString(fmt.Sprintf(`{{ green "✔" }} %s installed`, component))
 			} else {
-				p.bar.SetTemplateString(fmt.Sprintf(`{{ red "✘" }} Component %s encountered an error: %s`, component, cmp.err))
+				p.bar.SetTemplateString(fmt.Sprintf(`{{ red "✘" }} %s encountered an error: %s`, component, cmp.err))
 			}
 			// Close the bar out, outputting a new line
 			p.bar.Finish()

@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package progress
 
 import (
 	"bytes"
 	"io"
 	"testing"
+
+	"istio.io/istio/operator/pkg/name"
 )
 
 func TestProgressLog(t *testing.T) {
@@ -36,28 +38,34 @@ func TestProgressLog(t *testing.T) {
 	}
 
 	p := NewProgressLog()
-	foo := p.NewComponent("foo")
-	foo.ReportProgress()
-	expect(`- Processing resources for components foo.`)
 
-	bar := p.NewComponent("bar")
-	bar.ReportProgress()
+	pcn := name.PilotComponentName
+	pcnu := name.UserFacingComponentName(pcn)
+	bcn := name.IstioBaseComponentName
+	bcnu := name.UserFacingComponentName(bcn)
+	pc := p.NewComponent(string(pcn))
+	pc.ReportProgress()
+	expect(`- Processing resources for ` + pcnu + `.`)
+
+	bc := p.NewComponent(string(bcn))
+	bc.ReportProgress()
 	// string buffer won't rewrite, so we append
-	expect(`- Processing resources for components bar, foo.`)
-	bar.ReportProgress()
-	expect(`- Processing resources for components bar, foo.`)
-	bar.ReportProgress()
-	expect(`  Processing resources for components bar, foo.`)
+	expect(`- Processing resources for ` + bcnu + `, ` + pcnu + `.`)
+	bc.ReportProgress()
+	expect(`- Processing resources for ` + bcnu + `, ` + pcnu + `.`)
+	bc.ReportProgress()
+	expect(`  Processing resources for ` + bcnu + `, ` + pcnu + `.`)
 
-	bar.ReportWaiting([]string{"deployment"})
-	expect(`- Processing resources for components bar, foo. Waiting for deployment`)
+	bc.ReportWaiting([]string{"deployment"})
+	expect(`- Processing resources for ` + bcnu + `, ` + pcnu + `. Waiting for deployment`)
 
-	bar.ReportError("some error")
-	expect(`✘ Component bar encountered an error: some error`)
+	bc.ReportError("some error")
+	expect(`✘ ` + bcnu + ` encountered an error: some error`)
 
-	foo.ReportProgress()
-	expect(`- Processing resources for components foo.`)
+	pc.ReportProgress()
+	expect(`- Processing resources for ` + pcnu + `.`)
 
-	foo.ReportFinished()
-	expect(`✔ Component foo installed`)
+	pc.ReportFinished()
+	expect(`✔ ` + pcnu + ` installed`)
+
 }

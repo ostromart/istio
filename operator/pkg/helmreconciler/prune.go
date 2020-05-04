@@ -138,7 +138,7 @@ func (h *HelmReconciler) pruneUnlistedResources(excluded map[string]bool, compon
 				errs = util.AppendErr(errs, err)
 			}
 			h.removeFromObjectCache(componentName, oh)
-			h.opts.Log.LogAndPrintf("Pruned object %s.", oh)
+			h.opts.Log.LogAndPrintf("Removed %s.", oh)
 		}
 	}
 	return errs.ToError()
