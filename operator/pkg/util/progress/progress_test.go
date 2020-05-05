@@ -38,34 +38,33 @@ func TestProgressLog(t *testing.T) {
 	}
 
 	p := NewProgressLog()
+	cnp := name.PilotComponentName
+	cnpo := name.UserFacingComponentName(cnp)
+	cnb := name.IstioBaseComponentName
+	cnbo := name.UserFacingComponentName(cnb)
+	foo := p.NewComponent(string(cnp))
+	foo.ReportProgress()
+	expect(`- Processing resources for ` + cnpo + `.`)
 
-	pcn := name.PilotComponentName
-	pcnu := name.UserFacingComponentName(pcn)
-	bcn := name.IstioBaseComponentName
-	bcnu := name.UserFacingComponentName(bcn)
-	pc := p.NewComponent(string(pcn))
-	pc.ReportProgress()
-	expect(`- Processing resources for ` + pcnu + `.`)
-
-	bc := p.NewComponent(string(bcn))
-	bc.ReportProgress()
+	bar := p.NewComponent(string(cnb))
+	bar.ReportProgress()
 	// string buffer won't rewrite, so we append
-	expect(`- Processing resources for ` + bcnu + `, ` + pcnu + `.`)
-	bc.ReportProgress()
-	expect(`- Processing resources for ` + bcnu + `, ` + pcnu + `.`)
-	bc.ReportProgress()
-	expect(`  Processing resources for ` + bcnu + `, ` + pcnu + `.`)
+	expect(`- Processing resources for ` + cnbo + `, ` + cnpo + `.`)
+	bar.ReportProgress()
+	expect(`- Processing resources for ` + cnbo + `, ` + cnpo + `.`)
+	bar.ReportProgress()
+	expect(`  Processing resources for ` + cnbo + `, ` + cnpo + `.`)
 
-	bc.ReportWaiting([]string{"deployment"})
-	expect(`- Processing resources for ` + bcnu + `, ` + pcnu + `. Waiting for deployment`)
+	bar.ReportWaiting([]string{"deployment"})
+	expect(`- Processing resources for ` + cnbo + `, ` + cnpo + `. Waiting for deployment`)
 
-	bc.ReportError("some error")
-	expect(`✘ ` + bcnu + ` encountered an error: some error`)
+	bar.ReportError("some error")
+	expect(`✘ ` + cnbo + ` encountered an error: some error`)
 
-	pc.ReportProgress()
-	expect(`- Processing resources for ` + pcnu + `.`)
+	foo.ReportProgress()
+	expect(`- Processing resources for ` + cnpo + `.`)
 
-	pc.ReportFinished()
-	expect(`✔ ` + pcnu + ` installed`)
+	foo.ReportFinished()
+	expect(`✔ ` + cnpo + ` installed`)
 
 }
