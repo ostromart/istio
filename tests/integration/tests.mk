@@ -87,8 +87,10 @@ test.integration.kube.presubmit: | $(JUNIT_REPORT)
 # Defines a target to run a minimal reachability testing basic traffic
 .PHONY: test.integration.kube.reachability
 test.integration.kube.reachability: | $(JUNIT_REPORT)
-	PATH=${PATH}:${ISTIO_OUT} $(GO) test -p 1 ${T} ./tests/integration/security/ -timeout 30m \
+	PATH=${PATH}:${ISTIO_OUT} $(GO) test -v -p 1 ${T} ./tests/integration/security/ -timeout 30m \
 	--istio.test.env kube \
+	--istio.test.kube.deploy=false \
+	--istio.test.nocleanup=true \
 	${_INTEGRATION_TEST_FLAGS} \
 	--test.run=TestReachability \
 	2>&1 | tee >($(JUNIT_REPORT) > $(JUNIT_OUT))
