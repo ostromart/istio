@@ -1,0 +1,31 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  namespace: istio-system
+  name: istio-1-6-1-gke-0
+spec:
+  profile: default
+  revision: istio-161
+  values:
+    global:
+      defaultPodDisruptionBudget:
+        enabled: false
+      disablePolicyChecks: false
+
+    prometheus:
+      enabled: false
+
+    mixer:
+      adapters:
+        prometheus:
+          enabled: false
+        useAdapterCRDs: true
+      telemetry:
+        loadshedding:
+          latencyThreshold: 5000ms
+        sessionAffinityEnabled: true
+
+    pilot:
+      env:
+        PILOT_BLOCK_HTTP_ON_443: false
+        PILOT_ENABLE_UNSAFE_REGEX: true
